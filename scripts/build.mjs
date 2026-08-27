@@ -20,6 +20,9 @@ const PRECACHE_ASSETS = [
     "src/favicon.svg",
     "src/favicon.png",
     "src/apple-touch-icon.png",
+    "src/icon-192.png",
+    "src/icon-512.png",
+    "manifest.json",
 ];
 
 const template = await read("src/index.template.html");

@@ -105,10 +105,13 @@ function renderIcon(size, radius, fontScale, gap) {
 const root = new URL("../", import.meta.url);
 await writeFile(new URL("src/favicon.png", root), renderIcon(64, 12, 2, 4));
 await writeFile(new URL("src/apple-touch-icon.png", root), renderIcon(180, 32, 6, 8));
+// PWA manifest icons (installability requires 192 and 512).
+await writeFile(new URL("src/icon-192.png", root), renderIcon(192, 34, 6, 8));
+await writeFile(new URL("src/icon-512.png", root), renderIcon(512, 90, 17, 20));
 await writeFile(new URL("src/favicon.svg", root),
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
     + '<rect width="64" height="64" rx="12" fill="#edc22e"/>'
     + '<text x="32" y="40" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="bold" '
     + 'fill="#f9f6f2" text-anchor="middle" dominant-baseline="middle">2048</text>'
     + "</svg>\n");
-console.log("wrote src/favicon.png, src/apple-touch-icon.png, src/favicon.svg");
+console.log("wrote src/favicon.png, src/apple-touch-icon.png, src/icon-192.png, src/icon-512.png, src/favicon.svg");

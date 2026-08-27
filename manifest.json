@@ -1,0 +1,15 @@
+{
+    "name": "2048 游戏",
+    "short_name": "2048",
+    "description": "2048 小游戏，支持 AI 自动游玩，离线可玩。",
+    "lang": "zh-CN",
+    "start_url": "./",
+    "scope": "./",
+    "display": "standalone",
+    "background_color": "#faf8ef",
+    "theme_color": "#faf8ef",
+    "icons": [
+        { "src": "src/icon-192.png", "sizes": "192x192", "type": "image/png" },
+        { "src": "src/icon-512.png", "sizes": "512x512", "type": "image/png" }
+    ]
+}
