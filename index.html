@@ -29,6 +29,16 @@
             <button class="new-game-button" id="new-game-button-main">新游戏</button>
             <button class="new-game-button auto-play-button" id="auto-play-button">自动游玩 (AI)</button>
         </div>
+        <details class="notes">
+            <summary>什么时候需要等几秒？</summary>
+            <ul>
+                <li><strong>点「自动游玩」后停顿 1~3 秒</strong>：正在启动 AI 引擎——分配 64MB 搜索内存、构建走法/估值查找表，然后才开始第一步搜索。每次点「停止游玩」都会卸载引擎释放这块内存，所以再次开启会重新经历这段启动。</li>
+                <li><strong>残局突然停下"长考"最多约 2 秒</strong>：棋盘接近死亡时，引擎自动加深搜索寻找活路，算完即走，属正常行为不是卡死。</li>
+                <li><strong>后台挂机被系统回收</strong>：内存紧张时浏览器可能卸载后台标签页；切回时页面会自动恢复被回收前的棋局并继续自动游玩。手动刷新则始终是全新开局。</li>
+                <li><strong>手动游玩</strong>：方向键或滑动，永远无需等待。</li>
+            </ul>
+            <p>桌面 Chrome 挂机建议：设置 → 性能 → 内存节省程序 → 将本站加入"始终保持这些网站的活动状态"，可大幅减少后台回收。</p>
+        </details>
     </main>
     <script src="src/game-core.js"></script>
     <script src="src/ai.js"></script>

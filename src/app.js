@@ -41,6 +41,65 @@
     const clearTimer = (id) => root.clearTimeout(id);
     const isPageHidden = () => document.hidden === true;
 
+    // --- Discard recovery -------------------------------------------------
+    // Chrome may discard (unload) a background tab under memory pressure;
+    // reactivating it reloads the page, which would silently wipe a running
+    // autoplay session. While autoplay is active the game state is mirrored
+    // into sessionStorage, and on load it is restored ONLY when
+    // document.wasDiscarded is true (Page Lifecycle API). A manual refresh
+    // has wasDiscarded === false, so it always starts a fresh game — this
+    // deliberately does not persist normal games across reloads.
+    const SESSION_KEY = "2048:autoplay-session";
+
+    function getSessionStorage() {
+        try {
+            const storage = root.sessionStorage;
+            if (!storage) return null;
+            storage.setItem("2048:probe", "1");
+            storage.removeItem("2048:probe");
+            return storage;
+        } catch {
+            return null;
+        }
+    }
+
+    function saveAutoPlaySession() {
+        const storage = getSessionStorage();
+        if (!storage) return;
+        try {
+            storage.setItem(SESSION_KEY, JSON.stringify({ board, score, targetCorner }));
+        } catch {
+            // Quota or private mode: recovery is best-effort only.
+        }
+    }
+
+    function clearAutoPlaySession() {
+        const storage = getSessionStorage();
+        if (!storage) return;
+        try {
+            storage.removeItem(SESSION_KEY);
+        } catch {
+            // Ignore: worst case a stale session lingers until tab close.
+        }
+    }
+
+    function readAutoPlaySession() {
+        const storage = getSessionStorage();
+        if (!storage) return null;
+        try {
+            const saved = JSON.parse(storage.getItem(SESSION_KEY) || "null");
+            const validBoard = Array.isArray(saved?.board) &&
+                saved.board.length === 4 &&
+                saved.board.every((row) => Array.isArray(row) && row.length === 4 &&
+                    row.every((v) => Number.isInteger(v) && v >= 0 && v <= 131072 &&
+                        (v === 0 || (v & (v - 1)) === 0)));
+            if (!validBoard || !Number.isInteger(saved.score) || saved.score < 0) return null;
+            return saved;
+        } catch {
+            return null;
+        }
+    }
+
     function coordinateKey(r, c) {
         return `${r}-${c}`;
     }
@@ -213,6 +272,7 @@
         cancelAutoPlayScheduling();
         terminateWorker();
         releaseAutoPlayLock();
+        clearAutoPlaySession();
         autoPlayButton.textContent = "自动游玩 (AI)";
         autoPlayButton.classList.remove("active");
     }
@@ -246,6 +306,7 @@
             });
         }
         isMoving = false;
+        if (isAutoPlaying) saveAutoPlaySession();
         if (!checkGameStatus() && isAutoPlaying) {
             scheduleAutoPlay(Math.max(0, AUTO_PLAY_DELAY - ANIMATION_DURATION));
         }
@@ -413,7 +474,9 @@
     function startAutoPlay() {
         if (isAutoPlaying || gameOver) return;
         isAutoPlaying = true;
-        targetCorner = AI.inferPlayerCorner(board);
+        // A discard-recovery restore carries its strategy corner across the
+        // reload; only a fresh manual start infers it from the board.
+        if (!targetCorner) targetCorner = AI.inferPlayerCorner(board);
         acquireAutoPlayLock();
         autoPlayButton.textContent = "停止游玩";
         autoPlayButton.classList.add("active");
@@ -470,12 +533,44 @@
         root.addEventListener("resize", () => {
             if (!isMoving) renderBoard(board);
         });
+        // Flush the latest autoplay state right before a potential discard.
+        root.addEventListener("pagehide", () => {
+            if (isAutoPlaying) saveAutoPlaySession();
+        });
         // Precaches all assets (including the WASM engine) so everything
         // works offline after the first visit. Failure is non-fatal.
         if (root.navigator?.serviceWorker) {
             root.navigator.serviceWorker.register("sw.js").catch(() => {});
         }
-        setupGame();
+        if (!restoreDiscardedSession()) setupGame();
+    }
+
+    // Restores a mid-autoplay game after the tab was discarded by the
+    // browser. Returns false for every other kind of page load.
+    function restoreDiscardedSession() {
+        if (document.wasDiscarded !== true) {
+            clearAutoPlaySession();
+            return false;
+        }
+        const saved = readAutoPlaySession();
+        if (!saved) return false;
+        board = saved.board.map((row) => [...row]);
+        score = saved.score;
+        targetCorner = saved.targetCorner ?? null;
+        gameOver = false;
+        isMoving = false;
+        scoreDisplay.textContent = String(score);
+        hideGameOver();
+        drawEmptyCells();
+        renderBoard(board);
+        if (Core.hasPossibleMoves(board)) {
+            startAutoPlay();
+        } else {
+            gameOver = true;
+            showGameOver();
+            clearAutoPlaySession();
+        }
+        return true;
     }
 
     const testControls = root.__GAME_TESTING__ ? {

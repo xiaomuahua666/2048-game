@@ -326,6 +326,80 @@ test("hidden JS fallback advances without timers", async () => {
     browser.scheduler.runAll();
 });
 
+test("a discarded tab restores the autoplay session and resumes", async () => {
+    const storage = createFakeStorage({
+        "2048:autoplay-session": JSON.stringify({
+            board: [[128, 64, 0, 0], [4, 2, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+            score: 1234,
+            targetCorner: "top-left",
+        }),
+    });
+    const browser = createFakeBrowser();
+    browser.document.wasDiscarded = true;
+    const context = await loadScripts(
+        ["src/game-core.js", "src/ai.js", "src/app.js"],
+        { ...browser.globals, sessionStorage: storage },
+    );
+    const state = context.Game2048.getState();
+    assert.equal(state.score, 1234);
+    assert.equal(state.board[0][0], 128);
+    assert.equal(state.isAutoPlaying, true);
+    assert.equal(state.targetCorner, "top-left");
+    context.Game2048.stopAutoPlay();
+    browser.scheduler.runAll();
+});
+
+test("a manual refresh ignores and clears any leftover session", async () => {
+    const storage = createFakeStorage({
+        "2048:autoplay-session": JSON.stringify({
+            board: [[128, 64, 0, 0], [4, 2, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+            score: 1234,
+            targetCorner: "top-left",
+        }),
+    });
+    const browser = createFakeBrowser(); // wasDiscarded undefined = normal load
+    const context = await loadScripts(
+        ["src/game-core.js", "src/ai.js", "src/app.js"],
+        { ...browser.globals, sessionStorage: storage },
+    );
+    const state = context.Game2048.getState();
+    assert.equal(state.score, 0);
+    assert.equal(state.occupiedCount, 2);
+    assert.equal(state.isAutoPlaying, false);
+    assert.equal(storage.dump()["2048:autoplay-session"], undefined);
+    browser.scheduler.runAll();
+});
+
+test("autoplay moves write the session; stopping clears it", async () => {
+    const storage = createFakeStorage();
+    const workers = [];
+    class FakeWorker {
+        constructor() { this.messages = []; workers.push(this); }
+        postMessage(message) { this.messages.push(message); }
+        terminate() {}
+    }
+    const { context, scheduler } = await loadApp({ sessionStorage: storage, Worker: FakeWorker });
+    context.Game2048.setBoardForTest([[2, 2, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]);
+    context.Game2048.startAutoPlay();
+    scheduler.runNext("timeout");
+    const worker = workers[workers.length - 1];
+    const request = worker.messages[worker.messages.length - 1];
+    worker.onmessage({ data: {
+        type: "move-result",
+        requestId: request.requestId,
+        generation: request.generation,
+        result: { direction: "Left" },
+    } });
+    // Drain everything: score-animation cleanup, completeMove, next schedule.
+    scheduler.runAll();
+    const saved = JSON.parse(storage.dump()["2048:autoplay-session"]);
+    assert.equal(saved.board[0][0], 4);
+    assert.ok(saved.score >= 4);
+    context.Game2048.stopAutoPlay();
+    assert.equal(storage.dump()["2048:autoplay-session"], undefined);
+    scheduler.runAll();
+});
+
 test("merge sources converge and reconcile once", async () => {
     const { context, elements, scheduler } = await loadApp();
     context.Game2048.setBoardForTest([[2, 2, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]);
