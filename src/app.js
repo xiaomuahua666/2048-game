@@ -298,12 +298,16 @@
         if (
             !isAutoPlaying ||
             requestGeneration !== generation ||
-            requestId !== pendingRequestId ||
-            isMoving
+            requestId !== pendingRequestId
         ) return;
         pendingRequestId = null;
-        if (result.direction) handleMove(result.direction);
-        else checkGameStatus();
+        // Defensive: an accepted reply that produces no move (illegal
+        // direction, or arriving mid-animation) must never end the autoplay
+        // chain silently; reschedule unless the game is actually over.
+        const moved = !isMoving && result.direction ? handleMove(result.direction) : false;
+        if (!moved && !checkGameStatus() && isAutoPlaying) {
+            scheduleAutoPlay(AUTO_PLAY_DELAY);
+        }
     }
 
     function handleWorkerMessage(event) {
@@ -323,6 +327,12 @@
         }
     }
 
+    // Depth of the synchronous background fallback chain. Hidden-tab timers
+    // are throttled to >=1s, so the JS-engine fallback runs synchronously
+    // while hidden; the counter bounds recursion and yields to a timer every
+    // 64 moves to unwind the stack.
+    let fallbackChainDepth = 0;
+
     function requestAiMove() {
         if (!isAutoPlaying || gameOver || isMoving || pendingRequestId !== null) return;
         const requestId = ++requestSequence;
@@ -341,11 +351,25 @@
             return;
         }
 
-        autoPlayTimeoutId = setTimer(() => {
-            autoPlayTimeoutId = null;
+        const runFallback = () => {
             if (!isAutoPlaying || requestGeneration !== generation || requestId !== pendingRequestId) return;
             const result = AI.chooseBestMove(Core.cloneBoard(board), options);
             applyAiResult(result, requestGeneration, requestId);
+        };
+
+        if (isPageHidden() && fallbackChainDepth < 64) {
+            fallbackChainDepth++;
+            try {
+                runFallback();
+            } finally {
+                fallbackChainDepth--;
+            }
+            return;
+        }
+
+        autoPlayTimeoutId = setTimer(() => {
+            autoPlayTimeoutId = null;
+            runFallback();
         }, 0);
     }
 

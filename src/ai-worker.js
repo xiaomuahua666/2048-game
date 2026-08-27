@@ -37,6 +37,9 @@ function boardToBigInt(board) {
 
 // Minimal legality check for the -1 ("certain death, nothing useful") case:
 // prefer any direction that changes the board so the game plays out fully.
+// canSlide(line) is true when tiles can slide toward line[0] or merge, so a
+// plain row maps to Left, a reversed row to Right, a plain column to Up and
+// a reversed column to Down.
 function firstValidDirection(board) {
     const canSlide = (line) => {
         for (let i = 0; i < 3; i++) {
@@ -47,10 +50,10 @@ function firstValidDirection(board) {
     };
     const rows = board;
     const cols = [0, 1, 2, 3].map((c) => board.map((row) => row[c]));
-    if (cols.some((col) => canSlide([...col].reverse()))) return "Up";
-    if (rows.some((row) => canSlide([...row].reverse()))) return "Left";
-    if (cols.some(canSlide)) return "Down";
-    if (rows.some(canSlide)) return "Right";
+    if (cols.some(canSlide)) return "Up";
+    if (rows.some(canSlide)) return "Left";
+    if (cols.some((col) => canSlide([...col].reverse()))) return "Down";
+    if (rows.some((row) => canSlide([...row].reverse()))) return "Right";
     return null;
 }
 

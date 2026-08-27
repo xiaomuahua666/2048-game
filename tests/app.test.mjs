@@ -261,6 +261,71 @@ test("monkey test: 500 random rapid inputs keep state consistent", async () => {
     assert.equal(boardTiles.length, 2, "DOM matches board state");
 });
 
+test("an accepted reply with an illegal direction cannot stall autoplay", async () => {
+    const workers = [];
+    class FakeWorker {
+        constructor() { this.messages = []; workers.push(this); }
+        postMessage(message) { this.messages.push(message); }
+        terminate() {}
+    }
+    const { context, scheduler } = await loadApp({ Worker: FakeWorker });
+    // Tile pinned at top-left: "Up" and "Left" are illegal.
+    context.Game2048.setBoardForTest([[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]);
+    context.Game2048.startAutoPlay();
+    scheduler.runNext("timeout");
+    const worker = workers[workers.length - 1];
+    const request = worker.messages[worker.messages.length - 1];
+    worker.onmessage({ data: {
+        type: "move-result",
+        requestId: request.requestId,
+        generation: request.generation,
+        result: { direction: "Up" }, // illegal: board must not change
+    } });
+    // The chain must reschedule instead of dying silently.
+    const state = context.Game2048.getState();
+    assert.equal(state.isAutoPlaying, true);
+    assert.ok(state.pending.autoPlayTimeout || state.pending.aiRequest,
+        "autoplay must have a pending continuation after a failed move");
+    context.Game2048.stopAutoPlay();
+    scheduler.runAll();
+});
+
+test("hidden JS fallback advances without timers", async () => {
+    // No Worker at all: the JS engine is the only path. While hidden the
+    // fallback must chain moves synchronously (hidden-tab timers are
+    // throttled to >=1s). A stub engine keeps each step O(1); real-engine
+    // strength is covered by tests/ai-worker.test.mjs and the benchmark.
+    const browser = createFakeBrowser();
+    const stubAI = {
+        DEFAULT_SEARCH_OPTIONS: {},
+        inferPlayerCorner: () => "bottom-left",
+        chooseBestMove: (board) => {
+            for (const direction of ["Left", "Right", "Up", "Down"]) {
+                // Cheap legality probe: any direction the real rules accept.
+                if (coreForStub.move(board, direction).moved) return { direction };
+            }
+            return { direction: null };
+        },
+    };
+    const coreContext = await loadScripts(["src/game-core.js"]);
+    const coreForStub = coreContext.GameCore;
+    const context = await loadScripts(
+        ["src/game-core.js", "src/app.js"],
+        { ...browser.globals, Worker: undefined, GameAI: stubAI },
+    );
+    browser.document.hidden = true;
+    const before = context.Game2048.getState().moves;
+    context.Game2048.startAutoPlay();
+    const state = context.Game2048.getState();
+    // The synchronous chain must have advanced the game with zero reliance
+    // on timers: either it is still running (deferred beyond the recursion
+    // cap) or the game finished, but score/occupancy must show progress.
+    assert.ok(state.score > 0 || state.occupiedCount > 2 || state.gameOver,
+        "hidden fallback must make progress synchronously");
+    context.Game2048.stopAutoPlay();
+    browser.scheduler.runAll();
+});
+
 test("merge sources converge and reconcile once", async () => {
     const { context, elements, scheduler } = await loadApp();
     context.Game2048.setBoardForTest([[2, 2, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]);

@@ -64,6 +64,30 @@ test("engine -1 on a live board falls back to a legal direction", async () => {
     assert.ok(["Left", "Right"].includes(reply.result.direction));
 });
 
+test("every reply direction is legal under production rules", async () => {
+    const { loadScripts } = await import("./helpers/load-scripts.mjs");
+    const { GameCore: Core } = await loadScripts(["src/game-core.js"]);
+    // Boards engineered so only specific directions are legal, including
+    // single-legal-move cases in all four directions. A mirrored fallback
+    // mapping fails this test; membership-only assertions do not catch it.
+    const boards = [
+        [[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], // only Right/Down
+        [[0, 0, 0, 2], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], // only Left/Down
+        [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [2, 0, 0, 0]], // only Right/Up
+        [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 2]], // only Left/Up
+        [[2, 2, 4, 8], [4, 8, 16, 32], [8, 16, 32, 64], [16, 32, 64, 128]], // only Left/Right
+        [[2, 4, 8, 16], [2, 8, 16, 32], [4, 16, 32, 64], [8, 32, 64, 128]], // only Up/Down
+    ];
+    for (const [index, board] of boards.entries()) {
+        const reply = await requestMove(board.map((row) => [...row]), 300 + index, 9);
+        assert.equal(reply.type, "move-result");
+        assert.ok(reply.result.direction, `board ${index} must yield a direction`);
+        const outcome = Core.move(board, reply.result.direction);
+        assert.equal(outcome.moved, true,
+            `board ${index}: ${reply.result.direction} must be a legal move`);
+    }
+});
+
 test("adapter ignores unrelated message types", async () => {
     const before = sent.length;
     self.onmessage({ data: { type: "calculate" } });
