@@ -29,8 +29,9 @@ test("service worker precaches every runtime asset for offline play", async () =
         "./src/ai.js",
         "./src/app.js",
         "./src/ai-worker.js",
-        "./src/wasm/ai.js",
-        "./src/wasm/ai.wasm",
+        "./src/egtb/worker.js",
+        "./src/egtb/ai_core.js",
+        "./src/egtb/ai_core.wasm",
     ];
     for (const asset of required) assert.ok(assets.includes(asset), `missing ${asset}`);
     // Every precached asset must exist on disk, or install fails outright.

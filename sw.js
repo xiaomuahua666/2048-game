@@ -3,8 +3,8 @@
 // generated sw.js directly.
 "use strict";
 
-const CACHE_NAME = "2048-cache-8dd31cf44166";
-const PRECACHE_ASSETS = ["./index.html","./src/styles.css","./src/game-core.js","./src/ai.js","./src/app.js","./src/ai-worker.js","./src/wasm/ai.js","./src/wasm/ai.wasm","./src/favicon.svg","./src/favicon.png","./src/apple-touch-icon.png"];
+const CACHE_NAME = "2048-cache-99c4caa35a3c";
+const PRECACHE_ASSETS = ["./index.html","./src/styles.css","./src/game-core.js","./src/ai.js","./src/app.js","./src/ai-worker.js","./src/egtb/worker.js","./src/egtb/ai_core.js","./src/egtb/ai_core.wasm","./src/favicon.svg","./src/favicon.png","./src/apple-touch-icon.png"];
 
 self.addEventListener("install", (event) => {
     event.waitUntil(

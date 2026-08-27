@@ -1,113 +1,122 @@
+// AI worker adapter (ES module worker).
+//
+// Bridges the app's `choose-move` protocol onto the vendored EGTB engine
+// from https://github.com/game-difficulty/2048EndgameTablebase (GPL-3.0,
+// see src/egtb/LICENSE): expectimax with adaptive depth 1~24+ plus a
+// distilled endgame tablebase embedded in ai_core.wasm.
+//
+// The vendored src/egtb/worker.js is used byte-for-byte unmodified. Its
+// protocol is `{type:"calculate", board_encoded:<16 hex chars>}` in and
+// `{type:"move_result", best_move:1..4}` out via the global postMessage.
+// We interpose on the global postMessage BEFORE importing it, and replace
+// self.onmessage AFTER importing it, so both sides speak our protocol.
 "use strict";
 
-// AI worker. Prefers the vendored WebAssembly engine (MIT, from
-// https://github.com/maitamdev/2048-ai): expectimax over a 64-bit bitboard
-// with 65536-entry move/evaluation lookup tables and a persistent
-// transposition table, iterative deepening from 3 ply. Falls back to the
-// pure-JS engine (game-core.js + ai.js) when WASM cannot initialize, e.g.
-// on memory pressure or very old browsers.
+const realPostMessage = self.postMessage.bind(self);
 
-const DIRECTIONS = ["Up", "Right", "Down", "Left"];
+// EGTB move codes, confirmed against the upstream demo's key map.
+const DIRECTION_BY_CODE = { 1: "Left", 2: "Right", 3: "Up", 4: "Down" };
 
-let wasmState = "loading";
+let engineReady = false;
+let currentRequest = null;
 let queuedMessage = null;
+let vendoredOnMessage = null;
 
-function flushQueued() {
-    if (!queuedMessage) return;
-    const message = queuedMessage;
-    queuedMessage = null;
-    handleRequest(message);
-}
-
-self.Module = {
-    // Tests running under Node inject the binary; browsers fetch it via
-    // locateFile relative to this worker's directory.
-    wasmBinary: self.__WASM_BINARY__,
-    noInitialRun: true,
-    locateFile: (path, directory) => `${directory}wasm/${path}`,
-    onRuntimeInitialized() {
-        wasmState = "ready";
-        flushQueued();
-    },
-    onAbort() {
-        wasmState = "failed";
-        flushQueued();
-    },
-};
-
-try {
-    importScripts("./wasm/ai.js");
-} catch {
-    wasmState = "failed";
-}
-
-importScripts("./game-core.js", "./ai.js");
-
-// Pack the board into four 16-bit rows: row 0 is the top row, column 0 is
-// the highest nibble, each nibble is log2(tileValue).
-function boardToRows(board) {
-    const rows = new Array(4);
+// Board: 4x4 array of tile values (0/2/4/...). EGTB wants 16 hex digits of
+// log2 ranks, row-major, capped at 0xF.
+function boardToHex(board) {
+    let hex = "";
     for (let r = 0; r < 4; r++) {
-        let row = 0;
         for (let c = 0; c < 4; c++) {
             const value = board[r][c];
             const rank = value === 0 ? 0 : Math.min(15, Math.round(Math.log2(value)));
-            row = (row << 4) | rank;
-        }
-        rows[r] = row;
-    }
-    return rows;
-}
-
-function firstValidDirection(board) {
-    for (const direction of DIRECTIONS) {
-        if (self.GameCore.move(board, direction).moved) return direction;
-    }
-    return null;
-}
-
-function chooseWithWasm(board) {
-    const rows = boardToRows(board);
-    let direction = null;
-    let bestScore = 0;
-    for (let dir = 0; dir < 4; dir++) {
-        const score = self.Module._jsWork(rows[0], rows[1], rows[2], rows[3], dir);
-        if (score > bestScore) {
-            bestScore = score;
-            direction = DIRECTIONS[dir];
+            hex += rank.toString(16);
         }
     }
-    // The engine scores a move 0 when it is invalid or leads to certain
-    // death; keep playing to the real end in the latter case.
-    if (direction === null) direction = firstValidDirection(board);
-    return { direction, engine: "wasm" };
+    return hex;
 }
 
-function handleRequest(message) {
-    const { requestId, generation, board, options } = message;
-    try {
-        const result = wasmState === "ready"
-            ? chooseWithWasm(board)
-            : { ...self.GameAI.chooseBestMove(board, options), engine: "js" };
-        self.postMessage({ type: "move-result", requestId, generation, result });
-    } catch (error) {
-        self.postMessage({
-            type: "move-error",
+function failCurrentRequest(message) {
+    if (!currentRequest) return;
+    const { requestId, generation } = currentRequest;
+    currentRequest = null;
+    realPostMessage({ type: "move-error", requestId, generation, message });
+}
+
+// Interpose: the vendored worker calls bare postMessage(), which resolves
+// to this assignment in the worker's global scope.
+self.postMessage = (message) => {
+    if (!message || typeof message !== "object") return;
+    if (message.type === "ready") {
+        engineReady = true;
+        if (queuedMessage) {
+            const pending = queuedMessage;
+            queuedMessage = null;
+            handleChooseMove(pending);
+        }
+        return;
+    }
+    if (message.type === "move_result") {
+        if (!currentRequest) return;
+        const { requestId, generation } = currentRequest;
+        currentRequest = null;
+        realPostMessage({
+            type: "move-result",
             requestId,
             generation,
-            message: error instanceof Error ? error.message : "AI search failed",
+            result: {
+                direction: DIRECTION_BY_CODE[message.best_move] || null,
+                engine: "egtb",
+            },
         });
     }
+};
+
+function handleChooseMove(message) {
+    currentRequest = { requestId: message.requestId, generation: message.generation };
+    try {
+        vendoredOnMessage({
+            data: { type: "calculate", board_encoded: boardToHex(message.board) },
+        });
+    } catch (error) {
+        failCurrentRequest(error instanceof Error ? error.message : "AI search failed");
+    }
+}
+
+// Importing runs the vendored top-level code: it starts WASM init and
+// assigns its own self.onmessage, which we capture and replace.
+try {
+    await import("./egtb/worker.js");
+} catch (error) {
+    self.onmessage = (event) => {
+        const message = event.data;
+        if (!message || message.type !== "choose-move") return;
+        realPostMessage({
+            type: "move-error",
+            requestId: message.requestId,
+            generation: message.generation,
+            message: error instanceof Error ? error.message : "engine failed to load",
+        });
+    };
+    throw error;
+}
+
+vendoredOnMessage = self.onmessage;
+if (typeof vendoredOnMessage !== "function") {
+    throw new Error("vendored EGTB worker did not install a message handler");
 }
 
 self.onmessage = (event) => {
     const message = event.data;
     if (!message || message.type !== "choose-move") return;
-    if (wasmState === "loading") {
-        // Keep only the latest request; the app never has more than one in
-        // flight, and a stale board must not be answered after a newer one.
+    if (currentRequest) {
+        // The app keeps one request in flight; a second one means the first
+        // became stale (e.g. reset). Prefer the newest board.
+        failCurrentRequest("superseded by a newer request");
+    }
+    if (!engineReady) {
         queuedMessage = message;
         return;
     }
-    handleRequest(message);
+    handleChooseMove(message);
 };
