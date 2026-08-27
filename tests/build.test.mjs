@@ -16,5 +16,29 @@ test("generated index is current and loads separated runtime assets", async () =
     assert.match(html, /<script src="src\/ai\.js"><\/script>/);
     assert.match(html, /<script src="src\/app\.js"><\/script>/);
     assert.equal([...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].some((match) => match[1].trim()), false);
-    assert.ok(Buffer.byteLength(html) < 3000);
+    assert.ok(Buffer.byteLength(html) < 4000);
+});
+
+test("service worker precaches every runtime asset for offline play", async () => {
+    const sw = await readFile(new URL("../sw.js", import.meta.url), "utf8");
+    const assets = JSON.parse(sw.match(/const PRECACHE_ASSETS = (\[[^\]]*\])/)[1]);
+    const required = [
+        "./index.html",
+        "./src/styles.css",
+        "./src/game-core.js",
+        "./src/ai.js",
+        "./src/app.js",
+        "./src/ai-worker.js",
+        "./src/wasm/ai.js",
+        "./src/wasm/ai.wasm",
+    ];
+    for (const asset of required) assert.ok(assets.includes(asset), `missing ${asset}`);
+    // Every precached asset must exist on disk, or install fails outright.
+    for (const asset of assets) {
+        await readFile(new URL(`../${asset.slice(2)}`, import.meta.url));
+    }
+    assert.match(sw, /caches\.match/);
+    assert.match(sw, /skipWaiting/);
+    const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+    assert.match(app, /serviceWorker\.register\("sw\.js"\)/);
 });

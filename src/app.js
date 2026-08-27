@@ -409,6 +409,11 @@
         root.addEventListener("resize", () => {
             if (!isMoving) renderBoard(board);
         });
+        // Precaches all assets (including the WASM engine) so everything
+        // works offline after the first visit. Failure is non-fatal.
+        if (root.navigator?.serviceWorker) {
+            root.navigator.serviceWorker.register("sw.js").catch(() => {});
+        }
         setupGame();
     }
 
