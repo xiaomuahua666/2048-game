@@ -41,68 +41,6 @@
     const clearTimer = (id) => root.clearTimeout(id);
     const isPageHidden = () => document.hidden === true;
 
-    // --- Persistence: survive tab freeze/kill and resume where we left off ---
-    const SAVE_KEY = "2048:game-state";
-    const SAVE_VERSION = 1;
-
-    function getStorage() {
-        try {
-            const storage = root.localStorage;
-            if (!storage) return null;
-            // Some private modes expose localStorage but throw on writes.
-            storage.setItem("2048:probe", "1");
-            storage.removeItem("2048:probe");
-            return storage;
-        } catch {
-            return null;
-        }
-    }
-
-    function saveGame() {
-        const storage = getStorage();
-        if (!storage) return;
-        try {
-            storage.setItem(SAVE_KEY, JSON.stringify({
-                version: SAVE_VERSION,
-                board,
-                score,
-                gameOver,
-                isAutoPlaying,
-                targetCorner,
-            }));
-        } catch {
-            // Quota exceeded or storage revoked; playing without saves is fine.
-        }
-    }
-
-    function isValidSavedBoard(candidate) {
-        return Array.isArray(candidate) &&
-            candidate.length === Core.BOARD_SIZE &&
-            candidate.every((row) => Array.isArray(row) &&
-                row.length === Core.BOARD_SIZE &&
-                row.every((value) => Number.isInteger(value) && value >= 0 &&
-                    value <= 131072 && (value === 0 || (value & (value - 1)) === 0)));
-    }
-
-    function readSavedGame() {
-        const storage = getStorage();
-        if (!storage) return null;
-        try {
-            const raw = storage.getItem(SAVE_KEY);
-            if (!raw) return null;
-            const saved = JSON.parse(raw);
-            if (
-                !saved ||
-                saved.version !== SAVE_VERSION ||
-                !isValidSavedBoard(saved.board) ||
-                !Number.isInteger(saved.score) || saved.score < 0
-            ) return null;
-            return saved;
-        } catch {
-            return null;
-        }
-    }
-
     function coordinateKey(r, c) {
         return `${r}-${c}`;
     }
@@ -236,13 +174,11 @@
     }
 
     function stopAutoPlay() {
-        const wasAutoPlaying = isAutoPlaying;
         isAutoPlaying = false;
         cancelAutoPlayScheduling();
         terminateWorker();
         autoPlayButton.textContent = "自动游玩 (AI)";
         autoPlayButton.classList.remove("active");
-        if (wasAutoPlaying) saveGame();
     }
 
     function setupGame() {
@@ -260,30 +196,6 @@
         drawEmptyCells();
         const newPositions = [addRandomTile(board), addRandomTile(board)].filter(Boolean);
         renderBoard(board, { newPositions });
-        saveGame();
-    }
-
-    // Restores board/score/autoplay from localStorage. Returns true when a
-    // valid save was applied; the caller falls back to setupGame() otherwise.
-    function restoreGame() {
-        const saved = readSavedGame();
-        if (!saved) return false;
-        generation++;
-        cancelMoveCompletion();
-        stopAutoPlay();
-        board = saved.board.map((row) => [...row]);
-        score = saved.score;
-        gameOver = !Core.hasPossibleMoves(board);
-        isMoving = false;
-        targetCorner = saved.targetCorner ?? null;
-        workerUnavailable = false;
-        scoreDisplay.textContent = String(score);
-        hideGameOver();
-        drawEmptyCells();
-        renderBoard(board);
-        if (gameOver) showGameOver();
-        else if (saved.isAutoPlaying) startAutoPlay();
-        return true;
     }
 
     function completeMove(moveResult, moveGeneration) {
@@ -298,9 +210,7 @@
             });
         }
         isMoving = false;
-        const ended = checkGameStatus();
-        saveGame();
-        if (!ended && isAutoPlaying) {
+        if (!checkGameStatus() && isAutoPlaying) {
             scheduleAutoPlay(Math.max(0, AUTO_PLAY_DELAY - ANIMATION_DURATION));
         }
     }
@@ -443,12 +353,9 @@
     function startAutoPlay() {
         if (isAutoPlaying || gameOver) return;
         isAutoPlaying = true;
-        // A restore carries its locked corner across sessions; only a fresh
-        // manual start re-infers the strategy corner.
-        if (!targetCorner) targetCorner = AI.inferPlayerCorner(board);
+        targetCorner = AI.inferPlayerCorner(board);
         autoPlayButton.textContent = "停止游玩";
         autoPlayButton.classList.add("active");
-        saveGame();
         scheduleAutoPlay(0);
     }
 
@@ -502,10 +409,7 @@
         root.addEventListener("resize", () => {
             if (!isMoving) renderBoard(board);
         });
-        // pagehide fires before Android freezes/kills a background tab and is
-        // more reliable there than unload; flush the latest state.
-        root.addEventListener("pagehide", saveGame);
-        if (!restoreGame()) setupGame();
+        setupGame();
     }
 
     const testControls = root.__GAME_TESTING__ ? {

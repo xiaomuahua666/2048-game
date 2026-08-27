@@ -127,58 +127,17 @@ test("a moving source element travels before reconciliation", async () => {
     assert.equal(context.Game2048.getState().occupiedCount, 2);
 });
 
-test("a finished move persists board, score, and autoplay state", async () => {
-    const storage = createFakeStorage();
+test("a session starts fresh and writes nothing to storage", async () => {
+    const storage = createFakeStorage({ "2048:game-state": JSON.stringify({ version: 1, board: [[2]] }) });
     const { context, scheduler } = await loadApp({ localStorage: storage });
-    context.Game2048.setBoardForTest([[2, 2, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]);
-    context.Game2048.handleMove("Left");
-    scheduler.runAll();
-    const saved = JSON.parse(storage.dump()["2048:game-state"]);
-    assert.equal(saved.score, 4);
-    assert.equal(saved.board[0][0], 4);
-    assert.equal(saved.isAutoPlaying, false);
-});
-
-test("a fresh session restores the saved game and resumes autoplay", async () => {
-    const storage = createFakeStorage({
-        "2048:game-state": JSON.stringify({
-            version: 1,
-            board: [[128, 64, 0, 0], [4, 2, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
-            score: 1234,
-            gameOver: false,
-            isAutoPlaying: true,
-            targetCorner: "top-left",
-        }),
-    });
-    const { context } = await loadApp({ localStorage: storage });
-    const state = context.Game2048.getState();
-    assert.equal(state.score, 1234);
-    assert.equal(state.board[0][0], 128);
-    assert.equal(state.isAutoPlaying, true);
-    assert.equal(state.targetCorner, "top-left");
-});
-
-test("corrupt saves fall back to a fresh game", async () => {
-    const storage = createFakeStorage({
-        "2048:game-state": JSON.stringify({ version: 1, board: [[3, "x"]], score: -5 }),
-    });
-    const { context } = await loadApp({ localStorage: storage });
     const state = context.Game2048.getState();
     assert.equal(state.score, 0);
     assert.equal(state.occupiedCount, 2);
     assert.equal(state.isAutoPlaying, false);
-});
-
-test("new game overwrites the previous save", async () => {
-    const storage = createFakeStorage();
-    const { context, scheduler } = await loadApp({ localStorage: storage });
     context.Game2048.setBoardForTest([[2, 2, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]);
     context.Game2048.handleMove("Left");
     scheduler.runAll();
-    context.Game2048.setupGame();
-    const saved = JSON.parse(storage.dump()["2048:game-state"]);
-    assert.equal(saved.score, 0);
-    assert.equal(saved.board.flat().filter(Boolean).length, 2);
+    assert.deepEqual(Object.keys(storage.dump()), ["2048:game-state"]);
 });
 
 test("merge sources converge and reconcile once", async () => {
