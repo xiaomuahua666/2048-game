@@ -173,10 +173,31 @@
         aiWorker = null;
     }
 
+    // Chrome exempts pages holding a Web Lock from background tab freezing
+    // (developer.chrome.com/blog/freezing-on-energy-saver). Holding one for
+    // the duration of autoplay keeps the AI running in background tabs.
+    let autoPlayLockRelease = null;
+
+    function acquireAutoPlayLock() {
+        if (autoPlayLockRelease || !root.navigator?.locks?.request) return;
+        root.navigator.locks.request("2048-autoplay", () => new Promise((resolve) => {
+            autoPlayLockRelease = resolve;
+        })).catch(() => {
+            autoPlayLockRelease = null;
+        });
+    }
+
+    function releaseAutoPlayLock() {
+        if (!autoPlayLockRelease) return;
+        autoPlayLockRelease();
+        autoPlayLockRelease = null;
+    }
+
     function stopAutoPlay() {
         isAutoPlaying = false;
         cancelAutoPlayScheduling();
         terminateWorker();
+        releaseAutoPlayLock();
         autoPlayButton.textContent = "自动游玩 (AI)";
         autoPlayButton.classList.remove("active");
     }
@@ -354,6 +375,7 @@
         if (isAutoPlaying || gameOver) return;
         isAutoPlaying = true;
         targetCorner = AI.inferPlayerCorner(board);
+        acquireAutoPlayLock();
         autoPlayButton.textContent = "停止游玩";
         autoPlayButton.classList.add("active");
         scheduleAutoPlay(0);

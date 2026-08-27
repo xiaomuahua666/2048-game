@@ -140,6 +140,45 @@ test("a session starts fresh and writes nothing to storage", async () => {
     assert.deepEqual(Object.keys(storage.dump()), ["2048:game-state"]);
 });
 
+test("autoplay holds a Web Lock and releases it on stop", async () => {
+    const lockEvents = [];
+    let heldPromise = null;
+    const locks = {
+        request(name, callback) {
+            lockEvents.push(`acquire:${name}`);
+            heldPromise = callback();
+            return heldPromise.then(() => lockEvents.push(`release:${name}`));
+        },
+    };
+    const { context, scheduler } = await loadApp({ navigator: { locks } });
+    context.Game2048.startAutoPlay();
+    assert.deepEqual(lockEvents, ["acquire:2048-autoplay"]);
+    context.Game2048.stopAutoPlay();
+    await heldPromise;
+    await new Promise((resolveNext) => setImmediate(resolveNext));
+    assert.deepEqual(lockEvents, ["acquire:2048-autoplay", "release:2048-autoplay"]);
+    scheduler.runAll();
+});
+
+test("reset during autoplay also releases the Web Lock", async () => {
+    const lockEvents = [];
+    let heldPromise = null;
+    const locks = {
+        request(name, callback) {
+            lockEvents.push("acquire");
+            heldPromise = callback();
+            return heldPromise.then(() => lockEvents.push("release"));
+        },
+    };
+    const { context, scheduler } = await loadApp({ navigator: { locks } });
+    context.Game2048.startAutoPlay();
+    context.Game2048.setupGame();
+    await heldPromise;
+    await new Promise((resolveNext) => setImmediate(resolveNext));
+    assert.deepEqual(lockEvents, ["acquire", "release"]);
+    scheduler.runAll();
+});
+
 test("merge sources converge and reconcile once", async () => {
     const { context, elements, scheduler } = await loadApp();
     context.Game2048.setBoardForTest([[2, 2, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]);
