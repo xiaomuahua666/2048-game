@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>2048 游戏</title>
+    <link rel="icon" href="src/favicon.svg" type="image/svg+xml">
+    <link rel="icon" href="src/favicon.png" type="image/png">
+    <link rel="apple-touch-icon" href="src/apple-touch-icon.png">
     <link rel="stylesheet" href="src/styles.css">
 </head>
 <body>
@@ -26,8 +29,8 @@
             <button class="new-game-button" id="new-game-button-main">新游戏</button>
             <button class="new-game-button auto-play-button" id="auto-play-button">自动游玩 (AI)</button>
         </div>
-        <section class="notes" aria-label="使用说明">
-            <h2>使用说明</h2>
+        <details class="notes">
+            <summary>使用说明</summary>
             <ul>
                 <li><strong>打开页面</strong>：只加载游戏本体（约 40KB），AI 引擎不会加载。</li>
                 <li><strong>首次点「自动游玩」</strong>：需要下载并初始化 AI 引擎（WebAssembly，约 20KB 下载 + 128MB 内存），会停顿几秒才开始走棋，属正常现象。</li>
@@ -35,7 +38,7 @@
                 <li><strong>切到后台</strong>：自动游玩会继续运行；但刷新或关闭页面后棋盘重置、AI 默认关闭。</li>
                 <li><strong>手动操作</strong>：方向键或滑动棋盘，无任何额外加载。</li>
             </ul>
-        </section>
+        </details>
     </main>
     <script src="src/game-core.js"></script>
     <script src="src/ai.js"></script>
