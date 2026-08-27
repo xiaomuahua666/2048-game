@@ -242,7 +242,7 @@
         if (workerUnavailable) return false;
         if (!root.Worker) return false;
         try {
-            aiWorker = new root.Worker("src/ai-worker.js", { type: "module" });
+            aiWorker = new root.Worker("src/ai-worker.js");
             aiWorker.onmessage = handleWorkerMessage;
             aiWorker.onerror = () => {
                 terminateWorker();

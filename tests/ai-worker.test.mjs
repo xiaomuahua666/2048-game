@@ -1,75 +1,89 @@
-// End-to-end tests for the AI worker adapter running the real vendored
-// EGTB engine (WASM) inside Node's ESM loader. `self`, `postMessage`, and
-// `performance` are stubbed to emulate a module worker's global scope.
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
+import vm from "node:vm";
 
-const sent = [];
-globalThis.self = globalThis;
-globalThis.postMessage = (message) => sent.push(message);
-// The vendored worker logs verbosely; keep test output readable.
-const silentConsole = { ...console, log: () => {}, info: () => {} };
-globalThis.console = silentConsole;
+const WASM_BINARY = await readFile(new URL("../src/wasm/ai.wasm", import.meta.url));
 
-await import("../src/ai-worker.js");
-globalThis.console = console;
+async function loadWorker({ withWasm }) {
+    const messages = [];
+    const sources = new Map();
+    for (const path of ["src/wasm/ai.js", "src/game-core.js", "src/ai.js", "src/ai-worker.js"]) {
+        sources.set(path, await readFile(new URL(`../${path}`, import.meta.url), "utf8"));
+    }
 
-async function requestMove(board, requestId, generation, timeoutMs = 30000) {
-    const before = sent.length;
-    self.onmessage({ data: { type: "choose-move", requestId, generation, board } });
-    const deadline = Date.now() + timeoutMs;
-    while (sent.length === before && Date.now() < deadline) {
+    const context = vm.createContext({
+        console,
+        Math,
+        WebAssembly,
+        TextDecoder,
+        performance: { now: () => Date.now() },
+        setTimeout,
+        clearTimeout,
+        clearInterval,
+        setInterval,
+        postMessage: (message) => messages.push(message),
+        location: { href: "http://localhost/src/ai-worker.js" },
+    });
+    context.self = context;
+    context.__WASM_BINARY__ = withWasm ? new Uint8Array(WASM_BINARY) : undefined;
+    context.importScripts = (...paths) => {
+        for (const path of paths) {
+            const key = path.replace("./wasm/", "src/wasm/").replace("./", "src/");
+            if (!withWasm && key === "src/wasm/ai.js") throw new Error("wasm unavailable");
+            vm.runInContext(sources.get(key), context, { filename: key });
+        }
+    };
+    vm.runInContext(sources.get("src/ai-worker.js"), context, { filename: "src/ai-worker.js" });
+    // Emscripten defers onRuntimeInitialized through its dependency chain;
+    // give pending microtasks a chance to run.
+    for (let i = 0; i < 20 && withWasm && context.Module && !context.Module.calledRun; i++) {
         await new Promise((resolveNext) => setTimeout(resolveNext, 25));
     }
-    assert.ok(sent.length > before, "worker did not answer in time");
-    return sent[sent.length - 1];
+    return { context, messages };
 }
 
-test("adapter answers choose-move through the real EGTB engine", async () => {
-    const reply = await requestMove(
-        [[2, 2, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 4, 0]],
-        11,
-        3,
-    );
-    assert.equal(reply.type, "move-result");
-    assert.equal(reply.requestId, 11);
-    assert.equal(reply.generation, 3);
-    assert.equal(reply.result.engine, "egtb");
-    assert.ok(["Up", "Down", "Left", "Right"].includes(reply.result.direction));
+test("worker answers through the WASM engine with request identity", async () => {
+    const { context, messages } = await loadWorker({ withWasm: true });
+    context.self.onmessage({
+        data: {
+            type: "choose-move",
+            requestId: 7,
+            generation: 3,
+            board: [[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 2, 0]],
+            options: {},
+        },
+    });
+    for (let i = 0; i < 40 && messages.length === 0; i++) {
+        await new Promise((resolveNext) => setTimeout(resolveNext, 25));
+    }
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].type, "move-result");
+    assert.equal(messages[0].requestId, 7);
+    assert.equal(messages[0].generation, 3);
+    assert.equal(messages[0].result.engine, "wasm");
+    assert.ok(["Up", "Right", "Down", "Left"].includes(messages[0].result.direction));
 });
 
-test("adapter reports null direction on a dead board", async () => {
-    const reply = await requestMove(
-        [[2, 4, 2, 4], [4, 2, 4, 2], [2, 4, 2, 4], [4, 2, 4, 2]],
-        12,
-        3,
-    );
-    assert.equal(reply.type, "move-result");
-    // Engine signals no-move with a non-positive code; adapter maps it to null.
-    assert.equal(reply.result.direction, null);
+test("worker falls back to the JS engine when WASM fails", async () => {
+    const { context, messages } = await loadWorker({ withWasm: false });
+    context.self.onmessage({
+        data: {
+            type: "choose-move",
+            requestId: 9,
+            generation: 1,
+            board: [[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 2, 0]],
+            options: { targetCorner: "bottom-left", nodeBudget: 3000, timeBudgetMs: 1000, maxDepth: 2 },
+        },
+    });
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].type, "move-result");
+    assert.equal(messages[0].result.engine, "js");
+    assert.ok(messages[0].result.direction);
 });
 
-test("adapter echoes request identity across sequential requests", async () => {
-    const first = await requestMove(
-        [[4, 2, 0, 0], [16, 8, 0, 0], [64, 32, 2, 0], [256, 128, 4, 2]],
-        21,
-        7,
-    );
-    const second = await requestMove(
-        [[2, 0, 0, 0], [0, 0, 0, 0], [0, 4, 0, 0], [0, 0, 0, 2]],
-        22,
-        7,
-    );
-    assert.equal(first.requestId, 21);
-    assert.equal(second.requestId, 22);
-    assert.equal(second.generation, 7);
-    assert.ok(second.result.direction);
-});
-
-test("adapter ignores unrelated message types", async () => {
-    const before = sent.length;
-    self.onmessage({ data: { type: "update_speed", ratio: 2 } });
-    self.onmessage({ data: null });
-    await new Promise((resolveNext) => setTimeout(resolveNext, 100));
-    assert.equal(sent.length, before);
+test("worker ignores unrelated message types", async () => {
+    const { context, messages } = await loadWorker({ withWasm: false });
+    context.self.onmessage({ data: { type: "cancel" } });
+    assert.equal(messages.length, 0);
 });
