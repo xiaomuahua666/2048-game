@@ -130,7 +130,9 @@
     function updateScore(points) {
         score += points;
         scoreDisplay.textContent = String(score);
-        if (points <= 0) return;
+        // Skip the floating "+points" effect in background tabs: it cannot
+        // be seen, and per-move DOM nodes plus cleanup timers would pile up.
+        if (points <= 0 || isPageHidden()) return;
         const animation = document.createElement("span");
         animation.className = "score-animation";
         animation.textContent = `+${points}`;
