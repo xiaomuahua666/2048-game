@@ -1,89 +1,73 @@
+// End-to-end tests for the AI worker adapter running the real vendored
+// ziap WASM engine inside Node. Worker globals are stubbed; the binary is
+// injected via __WASM_BINARY__ because Node cannot fetch file:// URLs.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import vm from "node:vm";
 
-const WASM_BINARY = await readFile(new URL("../src/wasm/ai.wasm", import.meta.url));
+const sent = [];
+globalThis.self = globalThis;
+globalThis.__WASM_BINARY__ = await readFile(new URL("../src/ziap/main.wasm", import.meta.url));
+globalThis.postMessage = (message) => sent.push(message);
 
-async function loadWorker({ withWasm }) {
-    const messages = [];
-    const sources = new Map();
-    for (const path of ["src/wasm/ai.js", "src/game-core.js", "src/ai.js", "src/ai-worker.js"]) {
-        sources.set(path, await readFile(new URL(`../${path}`, import.meta.url), "utf8"));
+await import("../src/ai-worker.js");
+
+async function requestMove(board, requestId, generation, timeoutMs = 30000) {
+    const before = sent.length;
+    self.onmessage({ data: { type: "choose-move", requestId, generation, board } });
+    const deadline = Date.now() + timeoutMs;
+    while (sent.length === before && Date.now() < deadline) {
+        await new Promise((resolveNext) => setTimeout(resolveNext, 10));
     }
-
-    const context = vm.createContext({
-        console,
-        Math,
-        WebAssembly,
-        TextDecoder,
-        performance: { now: () => Date.now() },
-        setTimeout,
-        clearTimeout,
-        clearInterval,
-        setInterval,
-        postMessage: (message) => messages.push(message),
-        location: { href: "http://localhost/src/ai-worker.js" },
-    });
-    context.self = context;
-    context.__WASM_BINARY__ = withWasm ? new Uint8Array(WASM_BINARY) : undefined;
-    context.importScripts = (...paths) => {
-        for (const path of paths) {
-            const key = path.replace("./wasm/", "src/wasm/").replace("./", "src/");
-            if (!withWasm && key === "src/wasm/ai.js") throw new Error("wasm unavailable");
-            vm.runInContext(sources.get(key), context, { filename: key });
-        }
-    };
-    vm.runInContext(sources.get("src/ai-worker.js"), context, { filename: "src/ai-worker.js" });
-    // Emscripten defers onRuntimeInitialized through its dependency chain;
-    // give pending microtasks a chance to run.
-    for (let i = 0; i < 20 && withWasm && context.Module && !context.Module.calledRun; i++) {
-        await new Promise((resolveNext) => setTimeout(resolveNext, 25));
-    }
-    return { context, messages };
+    assert.ok(sent.length > before, "worker did not answer in time");
+    return sent[sent.length - 1];
 }
 
-test("worker answers through the WASM engine with request identity", async () => {
-    const { context, messages } = await loadWorker({ withWasm: true });
-    context.self.onmessage({
-        data: {
-            type: "choose-move",
-            requestId: 7,
-            generation: 3,
-            board: [[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 2, 0]],
-            options: {},
-        },
-    });
-    for (let i = 0; i < 40 && messages.length === 0; i++) {
-        await new Promise((resolveNext) => setTimeout(resolveNext, 25));
+test("adapter answers choose-move through the real ziap engine", async () => {
+    const reply = await requestMove(
+        [[2, 2, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 4, 0]],
+        11,
+        3,
+    );
+    assert.equal(reply.type, "move-result");
+    assert.equal(reply.requestId, 11);
+    assert.equal(reply.generation, 3);
+    assert.equal(reply.result.engine, "ziap");
+    assert.ok(["Up", "Down", "Left", "Right"].includes(reply.result.direction));
+});
+
+test("identical board and generation give one deterministic direction", async () => {
+    const board = [[4, 2, 0, 0], [16, 8, 0, 0], [64, 32, 2, 0], [256, 128, 4, 2]];
+    const directions = new Set();
+    for (let index = 0; index < 5; index++) {
+        const reply = await requestMove(board, 100 + index, 5);
+        directions.add(reply.result.direction);
     }
-    assert.equal(messages.length, 1);
-    assert.equal(messages[0].type, "move-result");
-    assert.equal(messages[0].requestId, 7);
-    assert.equal(messages[0].generation, 3);
-    assert.equal(messages[0].result.engine, "wasm");
-    assert.ok(["Up", "Right", "Down", "Left"].includes(messages[0].result.direction));
+    assert.equal(directions.size, 1);
 });
 
-test("worker falls back to the JS engine when WASM fails", async () => {
-    const { context, messages } = await loadWorker({ withWasm: false });
-    context.self.onmessage({
-        data: {
-            type: "choose-move",
-            requestId: 9,
-            generation: 1,
-            board: [[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 2, 0]],
-            options: { targetCorner: "bottom-left", nodeBudget: 3000, timeBudgetMs: 1000, maxDepth: 2 },
-        },
-    });
-    assert.equal(messages.length, 1);
-    assert.equal(messages[0].type, "move-result");
-    assert.equal(messages[0].result.engine, "js");
-    assert.ok(messages[0].result.direction);
+test("a dead board still returns null direction", async () => {
+    const reply = await requestMove(
+        [[2, 4, 2, 4], [4, 2, 4, 2], [2, 4, 2, 4], [4, 2, 4, 2]],
+        12,
+        6,
+    );
+    assert.equal(reply.type, "move-result");
+    assert.equal(reply.result.direction, null);
 });
 
-test("worker ignores unrelated message types", async () => {
-    const { context, messages } = await loadWorker({ withWasm: false });
-    context.self.onmessage({ data: { type: "cancel" } });
-    assert.equal(messages.length, 0);
+test("engine -1 on a live board falls back to a legal direction", async () => {
+    // Nearly dead board with exactly one legal move (merge in top row).
+    const board = [[2, 2, 4, 8], [4, 8, 16, 32], [8, 16, 32, 64], [16, 32, 64, 128]];
+    const reply = await requestMove(board, 13, 7);
+    assert.equal(reply.type, "move-result");
+    assert.ok(["Left", "Right"].includes(reply.result.direction));
+});
+
+test("adapter ignores unrelated message types", async () => {
+    const before = sent.length;
+    self.onmessage({ data: { type: "calculate" } });
+    self.onmessage({ data: null });
+    await new Promise((resolveNext) => setTimeout(resolveNext, 100));
+    assert.equal(sent.length, before);
 });

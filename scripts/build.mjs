@@ -16,8 +16,7 @@ const PRECACHE_ASSETS = [
     "src/ai.js",
     "src/app.js",
     "src/ai-worker.js",
-    "src/wasm/ai.js",
-    "src/wasm/ai.wasm",
+    "src/ziap/main.wasm",
     "src/favicon.svg",
     "src/favicon.png",
     "src/apple-touch-icon.png",
@@ -28,9 +27,8 @@ const swTemplate = await read("src/sw.template.js");
 await Promise.all([
     ...["src/styles.css", "src/game-core.js", "src/ai.js", "src/app.js", "src/ai-worker.js"]
         .map((path) => read(path)),
-    access(resolve(root, "src/wasm/ai.js")),
-    access(resolve(root, "src/wasm/ai.wasm")),
-    access(resolve(root, "src/wasm/LICENSE")),
+    access(resolve(root, "src/ziap/main.wasm")),
+    access(resolve(root, "src/ziap/LICENSE")),
 ]);
 
 for (const asset of ["src/styles.css", "src/game-core.js", "src/ai.js", "src/app.js"]) {

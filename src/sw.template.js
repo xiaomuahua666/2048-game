@@ -24,6 +24,22 @@ self.addEventListener("activate", (event) => {
     );
 });
 
+// The WASM AI engine uses shared memory, which requires cross-origin
+// isolation. Vercel sends these headers itself (vercel.json); injecting
+// them here as well makes any plain static host isolated from the second
+// load onward, and keeps offline-served pages isolated too.
+function withIsolationHeaders(response) {
+    if (response.status === 0) return response; // opaque
+    const headers = new Headers(response.headers);
+    headers.set("Cross-Origin-Opener-Policy", "same-origin");
+    headers.set("Cross-Origin-Embedder-Policy", "require-corp");
+    return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+    });
+}
+
 self.addEventListener("fetch", (event) => {
     const url = new URL(event.request.url);
     if (url.origin !== self.location.origin || event.request.method !== "GET") return;
@@ -31,12 +47,14 @@ self.addEventListener("fetch", (event) => {
     // cache-first so the game keeps working fully offline.
     const target = event.request.mode === "navigate" ? "index.html" : event.request;
     event.respondWith(
-        caches.match(target).then((cached) => cached || fetch(event.request).then((response) => {
-            if (response.ok) {
-                const copy = response.clone();
-                caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-            }
-            return response;
-        })),
+        caches.match(target)
+            .then((cached) => cached || fetch(event.request).then((response) => {
+                if (response.ok) {
+                    const copy = response.clone();
+                    caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+                }
+                return response;
+            }))
+            .then(withIsolationHeaders),
     );
 });
