@@ -148,7 +148,10 @@ test("merge sources converge and reconcile once", async () => {
     assert.equal(movingTiles.length, 2);
     assert.equal(movingTiles.every((tile) => tile.dataset.c === "0"), true);
     scheduler.runAll();
-    const merged = elements["game-board"].querySelectorAll(".tile").filter((tile) => tile.textContent === "4");
+    // Value-based matching is ambiguous: the random spawn can also be a 4.
+    // The merge destination is identified by its animation class instead.
+    const merged = elements["game-board"].querySelectorAll(".tile").filter((tile) => tile.classList.contains("merged-tile"));
     assert.equal(merged.length, 1);
-    assert.equal(merged[0].classList.contains("merged-tile"), true);
+    assert.equal(merged[0].textContent, "4");
+    assert.equal(merged[0].dataset.c, "0");
 });
