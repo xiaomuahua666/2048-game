@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>2048 游戏</title>
+    <link rel="stylesheet" href="src/styles.css">
+</head>
+<body>
+    <main id="game-shell">
+        <div id="game-container">
+            <div class="header">
+                <h1>2048</h1>
+                <div class="score-container" aria-live="polite">
+                    <div class="score-title">分数</div>
+                    <div id="score">0</div>
+                </div>
+            </div>
+            <div id="game-board" aria-label="2048 游戏棋盘"></div>
+            <div id="game-over-screen" role="dialog" aria-modal="true" aria-labelledby="game-message">
+                <span id="game-message"></span>
+                <button class="new-game-button" id="new-game-button-overlay">再玩一次</button>
+            </div>
+        </div>
+        <div class="button-row">
+            <button class="new-game-button" id="new-game-button-main">新游戏</button>
+            <button class="new-game-button auto-play-button" id="auto-play-button">自动游玩 (AI)</button>
+        </div>
+    </main>
+    <script src="src/game-core.js"></script>
+    <script src="src/ai.js"></script>
+    <script src="src/app.js"></script>
+</body>
+</html>

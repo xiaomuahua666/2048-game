@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:check": "node scripts/build.mjs --check",
+    "test": "node --test",
+    "check": "npm run build:check && npm test",
+    "benchmark:ai": "node scripts/benchmark-ai.mjs"
+  }
+}
