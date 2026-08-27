@@ -3,7 +3,7 @@
 // generated sw.js directly.
 "use strict";
 
-const CACHE_NAME = "2048-cache-1c1e0d0ad2bf";
+const CACHE_NAME = "2048-cache-ca03da036591";
 const PRECACHE_ASSETS = ["./index.html","./src/styles.css","./src/game-core.js","./src/ai.js","./src/app.js","./src/ai-worker.js","./src/ziap/main.wasm","./src/favicon.svg","./src/favicon.png","./src/apple-touch-icon.png"];
 
 self.addEventListener("install", (event) => {

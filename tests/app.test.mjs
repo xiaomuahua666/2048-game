@@ -179,6 +179,88 @@ test("reset during autoplay also releases the Web Lock", async () => {
     scheduler.runAll();
 });
 
+test("rapid toggling cannot leak a Web Lock granted after stop", async () => {
+    // Locks are granted asynchronously; simulate grant arriving only after
+    // the user has already toggled autoplay off again.
+    const grants = [];
+    const settled = [];
+    const locks = {
+        request(name, callback) {
+            return new Promise((resolveGrant) => grants.push(() => {
+                const held = callback();
+                held.then(() => settled.push("released"));
+                resolveGrant(held);
+            }));
+        },
+    };
+    const { context, scheduler } = await loadApp({ navigator: { locks } });
+    context.Game2048.startAutoPlay();
+    context.Game2048.stopAutoPlay();
+    context.Game2048.startAutoPlay();
+    context.Game2048.stopAutoPlay();
+    assert.equal(grants.length, 1, "spam clicks must not stack lock requests");
+    grants.shift()(); // grant arrives after autoplay already stopped
+    await new Promise((resolveNext) => setImmediate(resolveNext));
+    assert.deepEqual(settled, ["released"], "late grant must self-release");
+    scheduler.runAll();
+});
+
+test("monkey test: 500 random rapid inputs keep state consistent", async () => {
+    const workers = [];
+    class FakeWorker {
+        constructor() { this.messages = []; workers.push(this); this.terminated = false; }
+        postMessage(message) { this.messages.push(message); }
+        terminate() { this.terminated = true; }
+    }
+    const { context, elements, scheduler } = await loadApp({ Worker: FakeWorker });
+    let rngState = 12345;
+    const random = () => {
+        rngState = (rngState * 1664525 + 1013904223) >>> 0;
+        return rngState / 0x100000000;
+    };
+    const actions = [
+        () => context.Game2048.setupGame(),
+        () => context.Game2048.toggleAutoPlay(),
+        () => context.Game2048.startAutoPlay(),
+        () => context.Game2048.stopAutoPlay(),
+        () => context.Game2048.handleMove(["Up", "Down", "Left", "Right"][Math.floor(random() * 4)]),
+        () => scheduler.runNext("timeout"),
+        () => {
+            // Deliver a (possibly stale) worker reply mid-chaos.
+            const worker = workers[workers.length - 1];
+            const request = worker?.messages[worker.messages.length - 1];
+            if (worker && !worker.terminated && request) {
+                worker.onmessage?.({ data: {
+                    type: "move-result",
+                    requestId: request.requestId,
+                    generation: request.generation,
+                    result: { direction: "Left" },
+                } });
+            }
+        },
+    ];
+    for (let step = 0; step < 500; step++) {
+        actions[Math.floor(random() * actions.length)]();
+        const state = context.Game2048.getState();
+        assert.ok(state.score >= 0, "score must never go negative");
+        assert.ok(state.occupiedCount >= 1 && state.occupiedCount <= 16, "tile count in range");
+        for (const row of state.board) {
+            for (const value of row) {
+                assert.ok(value === 0 || (value & (value - 1)) === 0, "tiles are powers of two");
+            }
+        }
+    }
+    context.Game2048.stopAutoPlay();
+    context.Game2048.setupGame();
+    scheduler.runAll();
+    const finalState = context.Game2048.getState();
+    assert.equal(finalState.occupiedCount, 2, "reset always lands on two tiles");
+    assert.equal(finalState.isAutoPlaying, false);
+    assert.equal(scheduler.pending(), 0, "no callbacks may leak after reset");
+    const boardTiles = elements["game-board"].querySelectorAll(".tile");
+    assert.equal(boardTiles.length, 2, "DOM matches board state");
+});
+
 test("merge sources converge and reconcile once", async () => {
     const { context, elements, scheduler } = await loadApp();
     context.Game2048.setBoardForTest([[2, 2, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]);

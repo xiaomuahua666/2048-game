@@ -176,13 +176,26 @@
     // Chrome exempts pages holding a Web Lock from background tab freezing
     // (developer.chrome.com/blog/freezing-on-energy-saver). Holding one for
     // the duration of autoplay keeps the AI running in background tabs.
+    //
+    // The grant is asynchronous, so rapid toggling can stop autoplay before
+    // the lock arrives. The grant callback therefore re-checks state and
+    // releases immediately when autoplay is no longer active, and a pending
+    // flag prevents spam-clicks from stacking queued lock requests.
     let autoPlayLockRelease = null;
+    let autoPlayLockPending = false;
 
     function acquireAutoPlayLock() {
-        if (autoPlayLockRelease || !root.navigator?.locks?.request) return;
+        if (autoPlayLockPending || autoPlayLockRelease || !root.navigator?.locks?.request) return;
+        autoPlayLockPending = true;
         root.navigator.locks.request("2048-autoplay", () => new Promise((resolve) => {
+            autoPlayLockPending = false;
+            if (!isAutoPlaying) {
+                resolve();
+                return;
+            }
             autoPlayLockRelease = resolve;
         })).catch(() => {
+            autoPlayLockPending = false;
             autoPlayLockRelease = null;
         });
     }
