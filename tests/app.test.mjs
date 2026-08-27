@@ -400,6 +400,91 @@ test("autoplay moves write the session; stopping clears it", async () => {
     scheduler.runAll();
 });
 
+// Cheap stand-in for GameAI: real corner vocabulary, O(1) move choice.
+// The real engine's strength is covered elsewhere; these tests only need
+// the app<->engine contract (and would take minutes with real search).
+async function createStubAI() {
+    const { GameCore: Core } = await loadScripts(["src/game-core.js"]);
+    return {
+        CORNERS: Object.freeze(["top-left", "top-right", "bottom-left", "bottom-right"]),
+        DEFAULT_SEARCH_OPTIONS: {},
+        inferPlayerCorner: () => "bottom-left",
+        chooseBestMove(board, options = {}) {
+            // Mirror the real engine's corner handling: a non-string corner
+            // throws exactly like generateWeightMatrix's corner.startsWith.
+            const corner = options.targetCorner || "bottom-left";
+            corner.startsWith("top");
+            for (const direction of ["Left", "Down", "Right", "Up"]) {
+                if (Core.move(board, direction).moved) return { direction };
+            }
+            return { direction: null };
+        },
+    };
+}
+
+test("a corrupt targetCorner in the session is dropped, not passed to the AI", async () => {
+    const storage = createFakeStorage({
+        "2048:autoplay-session": JSON.stringify({
+            board: [[128, 64, 0, 0], [4, 2, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+            score: 1234,
+            targetCorner: 42, // non-string: corner.startsWith throws in the JS engine
+        }),
+    });
+    const browser = createFakeBrowser();
+    browser.document.wasDiscarded = true;
+    const stubAI = await createStubAI();
+    const context = await loadScripts(
+        ["src/game-core.js", "src/app.js"],
+        { ...browser.globals, sessionStorage: storage, GameAI: stubAI },
+    );
+    const state = context.Game2048.getState();
+    assert.equal(state.isAutoPlaying, true, "restore must survive a corrupt corner");
+    assert.ok(
+        stubAI.CORNERS.includes(state.targetCorner),
+        `corner must be re-inferred to a valid value, got ${state.targetCorner}`,
+    );
+    // The engine must be reachable without throwing on the restored corner.
+    for (let step = 0; step < 6; step++) browser.scheduler.runNext("timeout");
+    context.Game2048.stopAutoPlay();
+    browser.scheduler.runAll();
+});
+
+test("an external move during a pending AI request cannot starve autoplay", async () => {
+    // JS-fallback path (no Worker): requestAiMove parks its answer on a 0ms
+    // timer with pendingRequestId set. An external handleMove followed by
+    // the page going hidden runs completeMove synchronously, whose
+    // scheduleAutoPlay clears that timer — the request can never answer.
+    // Unless handleMove invalidates the stale request id, requestAiMove
+    // then refuses to issue a new request forever and autoplay starves.
+    const browser = createFakeBrowser();
+    const stubAI = await createStubAI();
+    const context = await loadScripts(
+        ["src/game-core.js", "src/app.js"],
+        { ...browser.globals, GameAI: stubAI },
+    );
+    const { document, scheduler } = browser;
+    context.Game2048.setBoardForTest([[2, 2, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]);
+    context.Game2048.startAutoPlay();
+    scheduler.runNext("timeout"); // autoplay step issues the AI request
+    assert.equal(context.Game2048.getState().pending.aiRequest, true);
+    assert.equal(context.Game2048.handleMove("Left"), true); // external move
+    const scoreAfterMove = context.Game2048.getState().score;
+    // Hide the page before the 0ms fallback timer fires: completeMove runs
+    // synchronously and its rescheduling clears the pending fallback timer.
+    document.hidden = true;
+    document.dispatch("visibilitychange");
+    const state = context.Game2048.getState();
+    assert.equal(state.isAutoPlaying, true);
+    // With the fix, the hidden synchronous chain keeps playing (score grows
+    // or the game ends); a starved chain freezes at the external move's score.
+    assert.ok(
+        state.score > scoreAfterMove || state.gameOver,
+        `autoplay must keep advancing after an external move (score stuck at ${state.score})`,
+    );
+    context.Game2048.stopAutoPlay();
+    scheduler.runAll();
+});
+
 test("merge sources converge and reconcile once", async () => {
     const { context, elements, scheduler } = await loadApp();
     context.Game2048.setBoardForTest([[2, 2, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]);

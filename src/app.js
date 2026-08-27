@@ -94,6 +94,11 @@
                     row.every((v) => Number.isInteger(v) && v >= 0 && v <= 131072 &&
                         (v === 0 || (v & (v - 1)) === 0)));
             if (!validBoard || !Number.isInteger(saved.score) || saved.score < 0) return null;
+            // A corrupt corner must not reach the engines (the JS fallback
+            // calls corner.startsWith); drop it and let startAutoPlay infer.
+            if (saved.targetCorner != null && !AI.CORNERS.includes(saved.targetCorner)) {
+                saved.targetCorner = null;
+            }
             return saved;
         } catch {
             return null;
@@ -320,6 +325,13 @@
             return false;
         }
         board = result.newBoardState;
+        // The board changed, so any in-flight AI request is now stale.
+        // Dropping its id both rejects the stale reply and lets the next
+        // scheduled autoplay step issue a fresh request — otherwise an
+        // external move landing mid-request leaves pendingRequestId set
+        // forever and requestAiMove starves (its timer was cleared by
+        // scheduleAutoPlay while nothing can answer the dead request).
+        pendingRequestId = null;
         updateScore(result.scoreAdded);
         isMoving = true;
         if (!isPageHidden()) animateMovements(result.movements);
