@@ -144,10 +144,10 @@ h1 {
 .tile-2048 { background: #edc22e; color: #f9f9e8; font-size: 1.8em; }
 .tile-4096 { background: #3c3a32; color: #f9f9e8; font-size: 1.8em; }
 .tile-8192 { background: #007bff; color: #f9f9e8; font-size: 1.7em; }
-.tile-16384 { background: #6f42c1; color: #f9f9e8; font-size: 1.6em; }
-.tile-32768 { background: #28a745; color: #f9f9e8; font-size: 1.5em; }
-.tile-65536 { background: #dc3545; color: #f9f9e8; font-size: 1.4em; }
-.tile-higher { background: #000; color: #f9f9e8; font-size: 1.3em; }
+.tile-16384 { background: #6f42c1; color: #f9f9e8; font-size: 1.5em; }
+.tile-32768 { background: #28a745; color: #f9f9e8; font-size: 1.4em; }
+.tile-65536 { background: #dc3545; color: #f9f9e8; font-size: 1.3em; }
+.tile-higher { background: #000; color: #f9f9e8; font-size: 1.2em; }
 
 #game-over-screen {
     position: absolute;
@@ -243,6 +243,8 @@ h1 {
     .tile-128, .tile-256, .tile-512 { font-size: 1.6em; }
     .tile-1024, .tile-2048, .tile-4096 { font-size: 1.4em; }
     .tile-8192, .tile-16384 { font-size: 1.2em; }
+    .tile-32768 { font-size: 1.1em; }
+    .tile-65536 { font-size: 1em; }
     .tile-higher { font-size: 0.9em; }
 }
 
